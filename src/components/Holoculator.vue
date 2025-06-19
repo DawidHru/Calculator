@@ -52,6 +52,7 @@
 </template>
 
 <script setup>
+import { supabase } from '../lib/supabaseClient' 
 import { ref, onMounted, watch } from 'vue';
 
 // --- STATE MANAGEMENT ---
@@ -64,10 +65,13 @@ const loadingProgress = ref(0);
 // --- LIFECYCLE HOOKS ---
 // onMounted wordt uitgevoerd zodra het component voor het eerst wordt geladen
 onMounted(() => {
-  // Start de timer om van splash naar login te gaan
+  // De timer om van splash naar login te gaan
   setTimeout(() => {
     appState.value = 'login';
-  }, 4000); // 4 seconden voor de animatie
+  }, 4000); 
+
+  // NIEUW: Haal de bestaande geschiedenis op als de app laadt
+  fetchCalculations();
 });
 
 // watch luistert naar veranderingen in een ref.
@@ -111,6 +115,27 @@ const loadingChecks = [
   { text: 'Finalizing Boot Sequence', status: 'OK' },
 ];
 
+const fetchCalculations = async () => {
+  try {
+    const { data, error } = await supabase
+      .from('calculations')          // Vanuit de 'calculations' tabel
+      .select('calculation_string')  // Selecteer alleen de kolom met de tekst
+      .order('created_at', { ascending: false }) // Sorteer op aanmaakdatum, nieuwste eerst
+      .limit(5);                     // Haal maximaal de laatste 5 op
+
+    if (error) throw error;
+
+    // Als er data is, zet die in onze 'history' ref
+    if (data) {
+      // .map() zorgt ervoor dat we een schone lijst van alleen de tekst krijgen
+      history.value = data.map(item => item.calculation_string);
+    }
+  } catch (error) {
+    console.error('Fout bij ophalen geschiedenis:', error.message);
+  }
+};
+
+
 // --- REKENMACHINE LOGICA (ongewijzigd) ---
 const current = ref('');
 const previous = ref(null);
@@ -125,7 +150,37 @@ const append = (number) => { if (operatorClicked.value) { current.value = ''; op
 const dot = () => { if (!current.value.includes('.')) { append('.'); } };
 const setOperator = (op) => { if (current.value === '') return; if (previous.value !== null) { equal(); } previous.value = current.value; operator.value = op; operatorClicked.value = true; };
 const calculate = () => { const prev = parseFloat(previous.value); const curr = parseFloat(current.value); if (isNaN(prev) || isNaN(curr)) return; let result; switch (operator.value) { case '+': result = prev + curr; break; case '-': result = prev - curr; break; case '*': result = prev * curr; break; case '/': result = prev / curr; break; default: return; } return result; };
-const equal = () => { if (operator.value && previous.value !== null && current.value !== '') { const result = calculate(); const calculationString = `${previous.value} ${operator.value} ${current.value} = ${result}`; history.value.unshift(calculationString); if (history.value.length > 5) { history.value.pop(); } current.value = String(result); previous.value = null; operator.value = null; } };
+const equal = async () => { 
+  if (operator.value && previous.value !== null && current.value !== '') {
+    const result = calculate();
+    const calculationString = `${previous.value} ${operator.value} ${current.value} = ${result}`;
+    
+    // De oude code om de geschiedenis lokaal te tonen
+    history.value.unshift(calculationString);
+    if (history.value.length > 5) {
+      history.value.pop();
+    }
+
+    // De nieuwe code om de berekening op te slaan in Supabase
+    try {
+      const { error } = await supabase
+        .from('calculations') // De naam van je tabel
+        .insert([
+          { calculation_string: calculationString }, // De data die je wilt opslaan
+        ])
+
+      if (error) throw error;
+      
+    } catch (error) {
+      console.error('Fout bij het opslaan in Supabase:', error.message);
+    }
+
+    // De oude code om de state te resetten
+    current.value = String(result);
+    previous.value = null;
+    operator.value = null;
+  }
+};
 
 </script>
 
